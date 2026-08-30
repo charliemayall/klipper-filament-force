@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Install filament_force Klippy extras into a Klipper checkout."""
+"""
+# filament_force - Pause the print on filament runout or jam
+#
+# Copyright (C) 2026 Charlie Mayall
+#
+# This file may be distributed under the terms of the GNU GPLv3 license.
+"""
 
 from __future__ import annotations
 
@@ -14,6 +20,8 @@ from pathlib import Path
 PACKAGE_NAME = "filament_force"
 # Previous tool_state install used a file shim at extras/filament_force.py
 LEGACY_SHIM = "filament_force.py"
+EXAMPLE_CFG = "filament_force.cfg"
+PRINTER_CONFIG_DIR = Path.home() / "printer_data" / "config"
 
 
 def ensure_git_exclude(klipper_dir: Path, exclude_line: str) -> None:
@@ -120,12 +128,41 @@ def install(klipper_dir: Path, repo_dir: Path) -> None:
     else:
         print("No stale bytecode to clear")
     print()
-    print("Add to printer.cfg:")
-    print("  [include filament_force.cfg]  # copy from this repo")
-    print()
+
+
+def copy_example_cfg(src: Path, dest: Path) -> bool:
+    """Copy example cfg if dest is missing. Returns True if copied."""
+    if dest.exists():
+        return False
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dest)
+    return True
+
+
+def offer_example_config(repo_dir: Path) -> None:
+    # Moonraker post_update_script has no TTY. Do not hang on input.
+    if not sys.stdin.isatty():
+        return
+    src = repo_dir / EXAMPLE_CFG
+    dest = PRINTER_CONFIG_DIR / EXAMPLE_CFG
+    if not src.is_file():
+        return
+    if dest.exists():
+        print(f"config already exists: {dest}")
+        return
+    if not PRINTER_CONFIG_DIR.is_dir():
+        print(f"No {PRINTER_CONFIG_DIR}; copy {EXAMPLE_CFG} into printer_data/config")
+        return
+    answer = input(f"Copy {EXAMPLE_CFG} to {dest}? (y/n) ").strip().lower()
+    if answer not in ("y", "yes"):
+        return
+    copy_example_cfg(src, dest)
+    print(f"Copied {dest}")
 
 
 def prompt_restart_klipper() -> None:
+    if not sys.stdin.isatty():
+        return
     answer = input("Restart klipper? (y/n) ").strip().lower()
     if answer in ("y", "yes"):
         subprocess.run(
@@ -135,7 +172,9 @@ def prompt_restart_klipper() -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description="Install filament_force into a Klipper extras directory."
+    )
     parser.add_argument(
         "klipper_dir",
         nargs="?",
@@ -148,6 +187,12 @@ def main() -> None:
     klipper_dir = Path(args.klipper_dir).expanduser().resolve()
 
     install(klipper_dir, repo_dir)
+    offer_example_config(repo_dir)
+    print("Add to printer.cfg:")
+    print(f"  [include {EXAMPLE_CFG}]")
+    print()
+    print("Then load filament, run FILAMENT_FORCE_CAL_OH_SHIT, SAVE_CONFIG.")
+    print()
     prompt_restart_klipper()
 
 

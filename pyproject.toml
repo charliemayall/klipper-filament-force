@@ -1,9 +1,11 @@
 [project]
 name = "filament-force"
 version = "0.1.0"
-description = "E-gated filament health (runout / jam) Klippy extra"
+description = "Pause the print on filament runout or jam, using the toolhead load cell"
 
 readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
     "klippy-stubs==0.3.2",

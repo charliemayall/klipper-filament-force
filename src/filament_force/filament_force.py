@@ -1,3 +1,11 @@
+"""
+# filament_force - Pause the print on filament runout or jam
+#
+# Copyright (C) 2026 Charlie Mayall
+#
+# This file may be distributed under the terms of the GNU GPLv3 license.
+"""
+
 # E-gated per-tool filament health via the toolhead load cell.
 #
 # Config section: [filament_force]
@@ -304,6 +312,7 @@ class FilamentForce:
         self.last_trip: TripKind | None = None
         self._spike = SpikeCheck()
         self._cal = OhShitCal()
+        self._test_runout: bool = False
 
         self.printer.register_event_handler("klippy:ready", self._handle_ready)
         self.printer.register_event_handler(
@@ -496,6 +505,7 @@ class FilamentForce:
 
     def _disarm(self) -> None:
         self._armed = False
+        self._test_runout = False
         if self._poll_timer is not None:
             self.reactor.update_timer(self._poll_timer, self.reactor.NEVER)
 
@@ -550,6 +560,7 @@ class FilamentForce:
                     self._jam_above_since = sample.timestamp
                 elif sample.timestamp - self._jam_above_since >= self.jam_dwell_s:
                     if not self._spike.active:
+                        raw = abs(sample.force - self._force_ref)
                         logging.info(
                             _ff_line(
                                 "trip",
@@ -557,17 +568,16 @@ class FilamentForce:
                                     "kind": TripKind.JAM.value,
                                     "tool": self.active_tool,
                                     "bin": self._last_bin,
-                                    "raw_g": (
-                                        f"{abs(sample.force - self._force_ref):.1f}"
-                                    ),
+                                    "raw_g": f"{raw:.1f}",
                                     "mean_g": "-",
                                     "z": "-",
+                                    "reason": "oh_shit_force",
                                 },
                             )
                         )
                         self.reactor.register_callback(
-                            lambda et: self._trip(
-                                TripKind.JAM, "absolute oh_shit_force dwell"
+                            lambda et, raw=raw: self._trip(
+                                TripKind.JAM, f"{raw:.0f}g"
                             )
                         )
                     self._jam_above_since = None
@@ -739,24 +749,22 @@ class FilamentForce:
         trip_kind = TripKind.from_anomaly(trip) if trip is not None else None
         if trip_kind is None:
             return next_time
-        self._ff_log(
-            "trip",
-            {
-                "kind": trip_kind.value,
-                "tool": self.active_tool,
-                "bin": bin_i,
-                "raw_g": f"{raw_g:.1f}",
-                "mean_g": f"{mean_g:.1f}",
-                "z": f"{z_s:.2f}",
-            },
+        # Trips are rare: always write klippy.log, even if debug_log is off.
+        logging.info(
+            _ff_line(
+                "trip",
+                {
+                    "kind": trip_kind.value,
+                    "tool": self.active_tool,
+                    "bin": bin_i,
+                    "raw_g": f"{raw_g:.1f}",
+                    "mean_g": f"{mean_g:.1f}",
+                    "e_mm/s": f"{completed.e_speed:.2f}",
+                    "z": f"{z_s:.2f}",
+                },
+            )
         )
-        detail = (
-            f"{'low' if trip_kind is TripKind.RUNOUT else 'high'}"
-            f" raw={raw_g:.1f}g"
-            f" e_speed={completed.e_speed:.2f}mm/s"
-            f" bin={bin_i}"
-            f" z={z_s:.2f}"
-        )
+        detail = f"{raw_g:.0f}g"
         self.reactor.register_callback(
             lambda et, k=trip_kind, d=detail: self._trip(k, d)
         )
@@ -857,9 +865,9 @@ class FilamentForce:
         )
 
     cmd_FILAMENT_FORCE_TEST_RUNOUT_help = (
-        "Heat, retract, then extrude enough forward E for global runout. "
+        "Heat, retract, then extrude enough forward E for a runout report. "
         "FILAMENT_FORCE_TEST_RUNOUT RETRACT=<mm> TEMP=<c> [SPEED=<mm/s>] "
-        "[RETRACT_SPEED=<mm/s>]"
+        "[RETRACT_SPEED=<mm/s>]. Idle: console only (Klipper will not PAUSE)."
     )
 
     def cmd_FILAMENT_FORCE_TEST_RUNOUT(self, gcmd: GCodeCommand) -> None:
@@ -905,6 +913,7 @@ class FilamentForce:
             "M400\n"
             "RESTORE_GCODE_STATE NAME=_FILAMENT_FORCE_TEST_RUNOUT\n"
         )
+        self._test_runout = True
         self.gcode.run_script_from_command(script)
 
     cmd_FILAMENT_FORCE_CAL_OH_SHIT_help = (
@@ -1026,7 +1035,8 @@ class FilamentForce:
     def _trip(self, kind: TripKind, detail: str) -> None:
         if self._triggering or self.actions.pending_recheck:
             return
-        if not self.actions.is_printing():
+        printing = self.actions.is_printing()
+        if not printing and not self._test_runout:
             return
         self._triggering = True
         self._spike.abort()
@@ -1034,7 +1044,7 @@ class FilamentForce:
             tool = self.active_tool
             target = self.actions.extruder_target()
             self.last_trip = kind
-            self.last_msg = f"filament_force {kind.value}: {detail}"
+            self.last_msg = f"filament_force {kind.value} ({detail})"
             template_key = (
                 MonitorTemplate.RUNOUT
                 if kind is TripKind.RUNOUT
@@ -1049,13 +1059,16 @@ class FilamentForce:
                     "TARGET": target,
                 },
             )
-            self.actions.soft_pause(
-                f"{self.last_msg}. Pausing - fix filament, then RESUME.",
-                tool=tool,
-                target=target,
-                reason=kind.value,
-                from_command=False,
-            )
+            if printing:
+                self.actions.soft_pause(
+                    f"{self.last_msg}. Pausing - fix filament, then RESUME.",
+                    tool=tool,
+                    target=target,
+                    reason=kind.value,
+                    from_command=False,
+                )
+            else:
+                self._log_info(f"{self.last_msg}. Idle test - no pause.")
         finally:
             self._triggering = False
 
@@ -1324,11 +1337,14 @@ class FilamentForce:
         self._unretract_remaining = 0.0
         self._after_idle = False
         book = self._book_for(tool)
-        gcmd.respond_info(
-            f"filament_force: active tool T{tool}"
-            f" (bins={book.n_bins},"
-            f" runout_learned={'yes' if book.runout.learned else 'no'},"
-            f" runout_windows={book.runout.window_count})"
+        self._ff_log(
+            "set_tool",
+            {
+                "tool": tool,
+                "bins": book.n_bins,
+                "runout_learned": 1 if book.runout.learned else 0,
+                "runout_windows": book.runout.window_count,
+            },
         )
 
     cmd_FILAMENT_FORCE_RESET_help = (
@@ -1409,9 +1425,7 @@ class FilamentForce:
             self._unlock_baseline()
             self._unretract_remaining = 0.0
             self._after_idle = False
-        gcmd.respond_info(
-            f"filament_force: suppress={'on' if self.suppress else 'off'}"
-        )
+        self._ff_log("suppress", {"on": 1 if self.suppress else 0})
 
 
 def load_config(config: ConfigWrapper) -> FilamentForce:

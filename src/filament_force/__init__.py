@@ -1,3 +1,11 @@
+"""
+# filament_force - Pause the print on filament runout or jam
+#
+# Copyright (C) 2026 Charlie Mayall
+#
+# This file may be distributed under the terms of the GNU GPLv3 license.
+"""
+
 # filament_force Klippy extra package.
 #
 # Symlink this directory to <klipper>/klippy/extras/filament_force so

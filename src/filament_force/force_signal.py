@@ -1,3 +1,11 @@
+"""
+# filament_force - Pause the print on filament runout or jam
+#
+# Copyright (C) 2026 Charlie Mayall
+#
+# This file may be distributed under the terms of the GNU GPLv3 license.
+"""
+
 # Pure force-window / per-tool anomaly helpers (no Klippy imports).
 #
 # Used by [filament_force] and unit-tested without a printer.
