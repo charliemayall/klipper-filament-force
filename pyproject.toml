@@ -1,0 +1,28 @@
+[project]
+name = "filament-force"
+version = "0.1.0"
+description = "E-gated filament health (runout / jam) Klippy extra"
+
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "klippy-stubs==0.3.2",
+    "ty>=0.0.63",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ty.environment]
+# Pin to the project venv so the editor (and CLI without VIRTUAL_ENV) resolve
+# klippy-stubs instead of falling back to a system Python site-packages.
+python = "./.venv"
+
+[tool.ty.src]
+include = ["src", "tests"]
