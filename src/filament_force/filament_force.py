@@ -12,8 +12,7 @@
 # FILAMENT_FORCE_CAL_OH_SHIT cold-extrudes to measure a jam peak and set
 # oh_shit_force to a fraction of that peak.
 #
-# Default continuous_detection: False - enable only after empty-vs-loaded
-# traces show usable SNR on-bed.
+# Default continuous_detection: True.
 
 from __future__ import annotations
 
@@ -130,6 +129,7 @@ class OhShitCal:
     peak_g: float = 0.0
     n_samples: int = 0
     last_peak_g: float = 0.0
+    outcome: str = ""
 
     def abort(self) -> None:
         self.active = False
@@ -145,6 +145,7 @@ class OhShitCal:
         self.ref_n = 0
         self.peak_g = 0.0
         self.n_samples = 0
+        self.outcome = ""
 
     def note(self, force: float) -> None:
         if not self.active:
@@ -174,6 +175,32 @@ class OhShitCal:
         return self.peak_g
 
 
+def allow_cold_extrude(heater: object | None) -> Any:
+    """Enable G1 E below min_extrude_temp. Returns a restore callback.
+
+    CAL_OH_SHIT is a cold jam by design. Without this, G1 E dies with
+    'Extrude below minimum temp' after TEMPERATURE_WAIT.
+    """
+    if heater is None:
+        return lambda: None
+    h = cast(Any, heater)
+    setter = getattr(h, "set_cold_extrude", None)
+    if setter is not None:
+        prev = bool(getattr(h, "cold_extrude", False))
+        setter(True, None)
+        return lambda: setter(prev, None)
+    # Upstream Klipper: can_extrude is derived from min_extrude_temp.
+    prev_min = float(getattr(h, "min_extrude_temp", 0.0))
+    h.min_extrude_temp = 0.0
+    h.can_extrude = True
+
+    def restore() -> None:
+        h.min_extrude_temp = prev_min
+        h.can_extrude = float(getattr(h, "smoothed_temp", 0.0)) >= prev_min
+
+    return restore
+
+
 class FilamentForce:
     def __init__(self, config: ConfigWrapper) -> None:
         self.printer: Printer = config.get_printer()
@@ -192,7 +219,7 @@ class FilamentForce:
         self.sensor_name: str = config.get("sensor", "load_cell_probe")
         self.extruder_name: str = config.get("extruder", "extruder")
         self.continuous_detection: bool = config.getboolean(
-            "continuous_detection", False
+            "continuous_detection", True
         )
         self.detection_length: float = config.getfloat(
             "detection_length", 7.0, above=0.0
@@ -212,7 +239,7 @@ class FilamentForce:
         self.recover_windows: int = config.getint("recover_windows", 2, minval=1)
         self.history_n: int = config.getint("history_n", 16, minval=5)
         self.min_learn_windows: int = config.getint("min_learn_windows", 5, minval=2)
-        self.oh_shit_force: float = config.getfloat("oh_shit_force", 1800.0, above=0.0)
+        self.oh_shit_force: float = config.getfloat("oh_shit_force", 4000.0, above=0.0)
         self.jam_dwell_s: float = config.getfloat("jam_dwell_s", 0.15, above=0.0)
         self.poll_interval: float = (
             config.getint("poll_interval_ms", 250, minval=50, maxval=2000) / 1000.0
@@ -428,6 +455,10 @@ class FilamentForce:
             self.actions.clear_pending()
 
     def _arm(self) -> None:
+        # G1 E from CHECK_SPIKE / CAL_OH_SHIT trips idle_timeout:printing.
+        # Arming here would abort the routine that caused the motion.
+        if self._cal.active or self._spike.active:
+            return
         if self._armed or self._load_cell is None or self._poll_timer is None:
             return
         self._armed = True
@@ -778,7 +809,7 @@ class FilamentForce:
             "_FILAMENT_FORCE_PROBE_DONE\n"
             "RESTORE_GCODE_STATE NAME=_FILAMENT_FORCE_PROBE\n"
         )
-        self.gcode.run_script(script)
+        self.gcode.run_script_from_command(script)
 
     def cmd__FILAMENT_FORCE_PROBE_F1(self, gcmd: GCodeCommand) -> None:
         del gcmd
@@ -874,7 +905,7 @@ class FilamentForce:
             "M400\n"
             "RESTORE_GCODE_STATE NAME=_FILAMENT_FORCE_TEST_RUNOUT\n"
         )
-        self.gcode.run_script(script)
+        self.gcode.run_script_from_command(script)
 
     cmd_FILAMENT_FORCE_CAL_OH_SHIT_help = (
         "Cool the hotend, then extrude into the cold melt zone and set "
@@ -906,10 +937,9 @@ class FilamentForce:
         feed = max(1.0, speed) * 60.0
         relieve = min(2.0, extrude)
         sensor = self.extruder_name
-        self._log_info(
-            f"filament_force: CAL_OH_SHIT waiting for {sensor} <= {max_temp:.0f}C, "
-            f"then extrude {extrude:.1f}mm at {speed:.1f}mm/s margin={margin:.2f}",
-            ok=True,
+        gcmd.respond_info(
+            f"filament_force: cooling to {max_temp:.0f}C, then cold-extrude "
+            f"{extrude:.1f}mm at {speed:.1f}mm/s"
         )
         script = (
             "M104 S0\n"
@@ -926,57 +956,71 @@ class FilamentForce:
             "M400\n"
             "RESTORE_GCODE_STATE NAME=_FILAMENT_FORCE_CAL_OH_SHIT\n"
         )
-        self.gcode.run_script(script)
+        restore_cold = allow_cold_extrude(
+            getattr(self._extruder, "get_heater", lambda: None)()
+            if self._extruder
+            else None
+        )
+        try:
+            # Nested under this command. run_script re-locks the gcode mutex
+            # and hangs the printer.
+            self.gcode.run_script_from_command(script)
+        except Exception:
+            self._cal.abort()
+            raise
+        finally:
+            restore_cold()
+        if self._cal.active:
+            self._cal.abort()
+            self._cal.outcome = "filament_force: cal did not finish"
+        msg = self._cal.outcome or "filament_force: cal did not finish"
+        self.last_msg = msg
+        gcmd.respond_info(msg)
 
     def cmd__FILAMENT_FORCE_CAL_OH_SHIT_GO(self, gcmd: GCodeCommand) -> None:
-        del gcmd
         if not self._cal.active or self._cal.tracking:
             return
         self._cal.start_extrude(self._last_force)
-        self._log_info(
-            f"filament_force: CAL_OH_SHIT extruding (ref={self._cal.ref:.1f}g "
-            f"n_idle={self._cal.ref_n})",
-            ok=True,
-        )
+        gcmd.respond_info("filament_force: extruding")
 
     def cmd__FILAMENT_FORCE_CAL_OH_SHIT_DONE(self, gcmd: GCodeCommand) -> None:
         del gcmd
         if not self._cal.active:
+            self._cal.outcome = (
+                "filament_force: cal was cancelled during the extrude"
+            )
             return
         apply = self._cal.apply
         margin = self._cal.margin
         n_samples = self._cal.n_samples
         peak = self._cal.finish()
         if n_samples <= 0:
-            self._log_info(
-                "filament_force: CAL_OH_SHIT no force samples during extrude"
+            self._cal.outcome = (
+                "filament_force: no load-cell samples during the extrude"
             )
             return
         suggested = oh_shit_from_jam_peak(
             peak, self.oh_shit_force, margin=margin
         )
-        msg = (
-            f"filament_force: CAL_OH_SHIT peak={peak:.1f}g "
-            f"n={n_samples} current={self.oh_shit_force:.1f}g"
-        )
         if suggested is None:
-            self._log_info(
-                f"{msg} - peak did not beat current oh_shit_force "
-                f"(try a colder nozzle, more EXTRUDE, or MARGIN closer to 1)"
+            self._cal.outcome = (
+                f"filament_force: peak {peak:.0f}g did not beat the current "
+                f"{self.oh_shit_force:.0f}g threshold. Not changed."
             )
             return
         if not apply:
-            self._log_info(
-                f"{msg} suggested={suggested:.1f}g (APPLY=0, not set). "
-                f"FILAMENT_FORCE_SET OH_SHIT_FORCE={suggested:.1f}"
+            self._cal.outcome = (
+                f"filament_force: peak {peak:.0f}g suggests {suggested:.0f}g "
+                f"(APPLY=0). FILAMENT_FORCE_SET OH_SHIT_FORCE={suggested:.0f}"
             )
             return
         self.oh_shit_force = suggested
         configfile = self.printer.lookup_object("configfile", None)
         if configfile is not None:
             configfile.set("filament_force", "oh_shit_force", f"{suggested:.1f}")
-        self._log_info(
-            f"{msg} -> oh_shit_force={suggested:.1f}g. SAVE_CONFIG to store."
+        self._cal.outcome = (
+            f"filament_force: jam threshold {suggested:.0f}g "
+            f"(peak {peak:.0f}g). SAVE_CONFIG to keep it."
         )
 
     def _trip(self, kind: TripKind, detail: str) -> None:

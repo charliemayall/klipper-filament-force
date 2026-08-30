@@ -1,6 +1,6 @@
 """Unit tests for pure force-window / per-tool anomaly logic."""
 
-from filament_force.filament_force import OhShitCal
+from filament_force.filament_force import OhShitCal, allow_cold_extrude
 from filament_force.force_signal import (
     AnomalyKind,
     DEFAULT_SPEED_BIN_EDGES,
@@ -615,3 +615,52 @@ class TestOhShitCal:
         assert peak == 2500.0
         assert cal.last_peak_g == 2500.0
         assert cal.active is False
+
+    def test_abort_clears_active(self) -> None:
+        cal = OhShitCal()
+        cal.begin(margin=0.85, apply=True)
+        cal.start_extrude(0.0)
+        cal.abort()
+        assert cal.active is False
+        assert cal.tracking is False
+
+    def test_begin_clears_outcome(self) -> None:
+        cal = OhShitCal()
+        cal.outcome = "stale"
+        cal.begin(margin=0.85, apply=True)
+        assert cal.outcome == ""
+
+
+class TestAllowColdExtrude:
+    def test_none_is_noop(self) -> None:
+        allow_cold_extrude(None)()
+
+    def test_kalico_setter_restores(self) -> None:
+        class Heater:
+            cold_extrude = False
+            can_extrude = False
+
+            def set_cold_extrude(self, cold_extrude: object, min_extrude_temp: object) -> None:
+                del min_extrude_temp
+                self.cold_extrude = bool(cold_extrude)
+                self.can_extrude = self.cold_extrude
+
+        heater = Heater()
+        restore = allow_cold_extrude(heater)
+        assert heater.cold_extrude is True
+        restore()
+        assert heater.cold_extrude is False
+
+    def test_klipper_min_temp_restores(self) -> None:
+        class Heater:
+            min_extrude_temp = 170.0
+            can_extrude = False
+            smoothed_temp = 25.0
+
+        heater = Heater()
+        restore = allow_cold_extrude(heater)
+        assert heater.min_extrude_temp == 0.0
+        assert heater.can_extrude is True
+        restore()
+        assert heater.min_extrude_temp == 170.0
+        assert heater.can_extrude is False
