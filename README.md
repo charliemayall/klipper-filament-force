@@ -44,7 +44,8 @@ post_update_script: install.sh
 1. Load filament.
 2. `FILAMENT_FORCE_CAL_OH_SHIT` - cools the hotend, then pushes into the
    cold nozzle to set the jam stop. Do not run this during a print.
-3. `SAVE_CONFIG`
+3. `SAVE_CONFIG` - writes `oh_shit_force` into `printer.cfg`. If that
+   option is in `filament_force.cfg`, delete it or SAVE_CONFIG will refuse.
 4. Optional: `FILAMENT_FORCE_TEST_RUNOUT RETRACT=30 TEMP=220` should report
    a runout in the console.
 
@@ -100,14 +101,49 @@ If your `RESUME` wrapper does extra work:
 {% endif %}
 ```
 
-Optional presence check before purge or load:
+## Spike check
+
+Continuous scoring watches forward extrusion. The spike check is separate:
+a one-shot retract/deretract that asks whether filament is still in the
+melt zone. It never pauses the print.
+
+The sequence is retract 3 mm, sample Force1, then deretract 3.2 mm (the
+retract plus 0.2 mm extra prime) while tracking the load cell. Filament in
+the melt zone resists that push, so the force jumps. An empty hotend does
+not.
+
+The probe scores `max(|peak - Force1|, |Force2 - Force1|)`. Peak is the
+largest excursion during the deretract; Force2 is the sample at the end.
+If that delta is at least `probe_spike_g` (default 50 g), filament is
+present. The result is `printer.filament_force.last_probe_spike` (1 or 0)
+and `last_probe_delta_g`.
+
+Call it when you need a yes/no on filament in the melt zone, not while
+the print is extruding. After a tool pickup is the usual spot: the docked
+tool may be empty, and a purge into a dry hotend is a mess. Run it after
+`FILAMENT_FORCE_SUPPRESS_END` (pickup finished), before the purge. Same
+idea before a manual load, or a resume that purges.
+
+The nozzle needs to be at print temperature; this moves the extruder.
+Jinja in the same macro is expanded before any G-code runs, so read the
+result from a follow-up macro:
 
 ```gcode
 FILAMENT_FORCE_CHECK_SPIKE
+```
+
+Then, in a later macro (not the same template):
+
+```gcode
 {% if printer.filament_force.last_probe_spike|int == 0 %}
     {action_respond_info("No filament spike - abort purge")}
 {% endif %}
 ```
+
+Override the motion with `SPIKE_G=`, `RETRACT=`, `EXTRA_PRIME=`,
+`FEEDRATE=` on the command, or `FILAMENT_FORCE_SET PROBE_SPIKE_G=` /
+`PROBE_RETRACT_MM=` / `PROBE_EXTRA_PRIME_MM=` / `PROBE_FEEDRATE=`.
+Skipped with `probe_busy` if a probe, trip, or cal is already running.
 
 ## Commands
 

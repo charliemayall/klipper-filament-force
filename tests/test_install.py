@@ -17,6 +17,13 @@ def test_copy_example_cfg_writes_missing_dest(tmp_path: Path) -> None:
     assert dest.read_text() == "ok\n"
 
 
+def test_example_cfg_does_not_set_oh_shit_force() -> None:
+    # SAVE_CONFIG cannot override an option that lives in an include.
+    for line in (ROOT / "filament_force.cfg").read_text().splitlines():
+        if line.split("#", 1)[0].strip().startswith("oh_shit_force"):
+            raise AssertionError("oh_shit_force in the include fights SAVE_CONFIG")
+
+
 def test_copy_example_cfg_does_not_overwrite(tmp_path: Path) -> None:
     src = tmp_path / "filament_force.cfg"
     src.write_text("new\n")
