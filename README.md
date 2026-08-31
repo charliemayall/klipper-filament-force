@@ -51,9 +51,40 @@ On a trip: fix the filament, then `RESUME`. If nothing was wrong:
 
 ## Toolchanger
 
-Call `_FF_TC_BEGIN` before park or pickup, and `_FF_TC_END TOOL={t}` after
-a successful pickup. On INDX that is the start of `CHANGE_TOOL` / `PARK_TOOL`
-and the end of `_RECORD_TOOLCHANGE`.
+Call two hooks from your park and pickup macros. The extra does not patch
+them.
+
+- `FILAMENT_FORCE_SUPPRESS_BEGIN` before park or pickup motion (stops scoring)
+- `FILAMENT_FORCE_SUPPRESS_END TOOL={t}` after a successful pickup (records the tool, scoring on)
+- `FILAMENT_FORCE_SUPPRESS_END` with no `TOOL` after a park that leaves the head empty
+
+A single-tool printer can ignore this.
+
+### INDX
+
+In `CHANGE_TOOL`, inside `{% if act != t %}`, before `PARK_TOOL` /
+`_PICKUP_TOOL`:
+
+```gcode
+FILAMENT_FORCE_SUPPRESS_BEGIN
+```
+
+Last line of `_RECORD_TOOLCHANGE`:
+
+```gcode
+FILAMENT_FORCE_SUPPRESS_END TOOL={t}
+```
+
+Standalone `PARK_TOOL` (calibration, `TC_CYCLE_ALL`) also needs a begin and
+an end. Put `FILAMENT_FORCE_SUPPRESS_BEGIN` at the start of `PARK_TOOL` (nested begin from
+`CHANGE_TOOL` is fine). Do not put `FILAMENT_FORCE_SUPPRESS_END` inside `PARK_TOOL` -
+`CHANGE_TOOL` would then score the pickup latch. After those standalone
+parks:
+
+```gcode
+PARK_TOOL
+FILAMENT_FORCE_SUPPRESS_END
+```
 
 ## Resume
 
@@ -85,6 +116,8 @@ FILAMENT_FORCE_CHECK_SPIKE
 - `FILAMENT_FORCE_RESET [TOOL=n]` - clear history after a false trip
 - `FILAMENT_FORCE_RESUME [VELOCITY=v]`
 - `FILAMENT_FORCE_SUPPRESS ENABLE=0|1`
+- `FILAMENT_FORCE_SUPPRESS_BEGIN` - call before park or pickup
+- `FILAMENT_FORCE_SUPPRESS_END [TOOL=n]` - call after pickup, or after a park with no TOOL
 
 ## Development
 
