@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/media/logo.png" width="240" alt="filament force">
+</p>
+
 # filament_force
 
 Pauses the print on filament runout or a jam, using the toolhead load cell.
