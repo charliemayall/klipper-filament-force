@@ -8,8 +8,8 @@ Needs `[load_cell_probe]` or `[load_cell]` (Kalico or Klipper).
 
 ```sh
 cd ~
-git clone https://github.com/charliemayall/filament_force.git
-cd filament_force
+git clone https://github.com/charliemayall/klipper-filament-force.git
+cd klipper-filament-force
 ./install.sh [~/klipper]
 ```
 
@@ -27,8 +27,8 @@ Moonraker update manager:
 ```ini
 [update_manager filament_force]
 type: git_repo
-path: ~/filament_force
-origin: https://github.com/charliemayall/filament_force.git
+path: ~/klipper-filament-force
+origin: https://github.com/charliemayall/klipper-filament-force.git
 primary_branch: main
 managed_services: klipper
 is_system_service: False

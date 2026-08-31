@@ -1,5 +1,5 @@
 [project]
-name = "filament-force"
+name = "klipper-filament-force"
 version = "0.1.0"
 description = "Pause the print on filament runout or jam, using the toolhead load cell"
 
