@@ -258,7 +258,7 @@ def oh_shit_from_jam_peak(
     peak_g: float,
     current_g: float,
     *,
-    margin: float = 0.85,
+    margin: float = 0.5,
 ) -> float | None:
     """Suggested oh_shit_force from a cold-jam peak, or None if not usable.
 

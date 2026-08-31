@@ -129,7 +129,7 @@ class OhShitCal:
 
     active: bool = False
     tracking: bool = False
-    margin: float = 0.85
+    margin: float = 0.5
     apply: bool = True
     ref: float = 0.0
     ref_sum: float = 0.0
@@ -920,14 +920,14 @@ class FilamentForce:
         "Cool the hotend, then extrude into the cold melt zone and set "
         "oh_shit_force from the jam peak. "
         "FILAMENT_FORCE_CAL_OH_SHIT [MAX_TEMP=50] [EXTRUDE=8] [SPEED=2] "
-        "[MARGIN=0.85] [APPLY=0|1]"
+        "[MARGIN=0.5] [APPLY=0|1]"
     )
 
     def cmd_FILAMENT_FORCE_CAL_OH_SHIT(self, gcmd: GCodeCommand) -> None:
         max_temp = gcmd.get_float("MAX_TEMP", 50.0, above=0.0)
         extrude = gcmd.get_float("EXTRUDE", 8.0, above=0.0)
         speed = gcmd.get_float("SPEED", 2.0, above=0.0)
-        margin = gcmd.get_float("MARGIN", 0.85, above=0.0, maxval=1.0)
+        margin = gcmd.get_float("MARGIN", 0.5, above=0.0, maxval=1.0)
         apply = bool(gcmd.get_int("APPLY", 1, minval=0, maxval=1))
         if self.suppress:
             raise gcmd.error("filament_force: CAL_OH_SHIT refused (suppress on)")

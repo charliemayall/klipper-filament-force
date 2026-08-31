@@ -582,11 +582,11 @@ class TestTestRunoutForward:
 
 class TestOhShitFromJamPeak:
     def test_margin_of_peak_when_above_current(self) -> None:
-        assert oh_shit_from_jam_peak(3000.0, 1800.0, margin=0.85) == 2550.0
+        assert oh_shit_from_jam_peak(3000.0, 1000.0) == 1500.0
 
     def test_refuses_when_suggested_would_lower(self) -> None:
-        # 0.85 * 1900 = 1615, below current 1800
-        assert oh_shit_from_jam_peak(1900.0, 1800.0, margin=0.85) is None
+        # 0.5 * 3000 = 1500, below current 1800
+        assert oh_shit_from_jam_peak(3000.0, 1800.0) is None
 
     def test_full_margin_still_requires_peak_above_current(self) -> None:
         assert oh_shit_from_jam_peak(2000.0, 1800.0, margin=1.0) == 2000.0
