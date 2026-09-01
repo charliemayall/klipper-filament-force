@@ -19,7 +19,6 @@ from filament_force.force_signal import (
     score_level,
     speed_bin_count,
     speed_bin_index,
-    speed_bin_knot,
     forward_e_for_test_runout,
 )
 
@@ -427,14 +426,6 @@ class TestSpeedBins:
         assert speed_bin_index(7.0, edges) == 4
         assert speed_bin_index(12.0, edges) == 4
 
-    def test_knots(self) -> None:
-        edges = DEFAULT_SPEED_BIN_EDGES
-        assert speed_bin_knot(0, edges) == 0.5
-        assert speed_bin_knot(1, edges) == 1.5
-        assert speed_bin_knot(2, edges) == 3.0
-        assert speed_bin_knot(3, edges) == 5.5
-        assert speed_bin_knot(4, edges) == 7.0
-
 
 class TestToolForceBook:
     def _book(self) -> ToolForceBook:
@@ -533,21 +524,23 @@ class TestToolForceBook:
         assert trip is AnomalyKind.LOW
         assert not book.bins[4].learned
 
-    def test_within_bin_lerps_between_neighbour_means(self) -> None:
+    def test_healthy_fast_bin_not_high_from_slower_neighbour(self) -> None:
+        # Perimeters at 3 mm/s learn 300g; infill at 5.5 mm/s learns 700g.
+        # 680g just inside the infill bin must not HIGH (lerp toward 300g
+        # used to trip this as a jam).
         book = self._book()
         for _ in range(5):
             assert self._obs(book, 300.0, 3.0, short_bead=False) is None
         for _ in range(5):
-            assert self._obs(book, 500.0, 5.5, short_bead=False) is None
+            assert self._obs(book, 700.0, 5.5, short_bead=False) is None
         stats = expected_force_stats(
-            book.bins, 4.2, DEFAULT_SPEED_BIN_EDGES
+            book.bins, 4.05, DEFAULT_SPEED_BIN_EDGES
         )
         assert stats is not None
-        k2 = speed_bin_knot(2, DEFAULT_SPEED_BIN_EDGES)
-        k3 = speed_bin_knot(3, DEFAULT_SPEED_BIN_EDGES)
-        expected = 300.0 + (4.2 - k2) / (k3 - k2) * 200.0
-        assert abs(stats.mean - expected) < 1e-6
-        assert abs(stats.mean - 500.0) > 50.0
+        assert abs(stats.mean - 700.0) < 1e-6
+        for _ in range(3):
+            assert self._obs(book, 680.0, 4.05, short_bead=False) is None
+        assert book.jam_streak == 0
 
     def test_jam_confirm_counts_across_bin_edge(self) -> None:
         book = self._book()
@@ -560,7 +553,7 @@ class TestToolForceBook:
         trip = self._obs(book, 4000.0, 3.99, short_bead=False)
         assert trip is AnomalyKind.HIGH
 
-    def test_unlearned_hole_does_not_lerp_high(self) -> None:
+    def test_unlearned_assigned_bin_does_not_high(self) -> None:
         book = self._book()
         for _ in range(5):
             assert self._obs(book, 400.0, 3.0, short_bead=False) is None

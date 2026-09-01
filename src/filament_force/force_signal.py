@@ -184,7 +184,7 @@ def speed_bin_index(e_speed: float, edges: Sequence[float]) -> int:
 
     Bin i is ``[edge[i-1], edge[i])`` with sentinels 0 and +inf. Interior
     ``edges`` are e.g. ``(1.0, 2.0, 4.0, 7.0)``. Jam HIGH scoring uses
-    ``expected_force_stats`` (lerp between learned neighbours), not this.
+    this same assignment via ``expected_force_stats``.
     """
     spd = max(0.0, float(e_speed))
     for i, edge in enumerate(edges):
@@ -193,33 +193,17 @@ def speed_bin_index(e_speed: float, edges: Sequence[float]) -> int:
     return len(edges)
 
 
-def speed_bin_knot(bin_i: int, edges: Sequence[float]) -> float:
-    """Representative speed for bin i (lerp knots).
-
-    Bin 0: midpoint of ``[0, edges[0])``. Interior: interval midpoint.
-    Last bin: ``edges[-1]`` (no fake centre for ``[last, inf)``).
-    """
-    n = speed_bin_count(edges)
-    if n <= 0:
-        return 0.0
-    i = 0 if bin_i < 0 else n - 1 if bin_i >= n else bin_i
-    if i == 0:
-        return float(edges[0]) * 0.5
-    if i == n - 1:
-        return float(edges[-1])
-    return 0.5 * (float(edges[i - 1]) + float(edges[i]))
-
-
 def expected_force_stats(
     bins: Sequence[ToolForceHistory],
     e_speed: float,
     edges: Sequence[float],
 ) -> MeanStdev | None:
-    """Healthy mean/stdev at e_speed, or None if the assigned bin is unlearned.
+    """Healthy mean/stdev of the assigned speed bin, or None if unlearned.
 
-    Lerps mean between bracketing learned knots; stdev is the max of those
-    two bins so a gap does not invent a tight band. Does not interpolate
-    through an unlearned assigned bin.
+    NB: do not interpolate across neighbouring bins. Slow bins sit at a
+    lower force than infill; a lerp toward that neighbour trips healthy
+    extrusion near the bin edge as HIGH. Ceiling: within-bin speed spread
+    still uses one mean. Split bins or a flow-aware band if that bites.
     """
     if not bins:
         return None
@@ -228,29 +212,6 @@ def expected_force_stats(
         i = len(bins) - 1
     if not bins[i].learned:
         return None
-    v = max(0.0, float(e_speed))
-    lo: int | None = None
-    hi: int | None = None
-    for j, hist in enumerate(bins):
-        if not hist.learned:
-            continue
-        knot = speed_bin_knot(j, edges)
-        if knot <= v:
-            lo = j
-        if knot >= v and hi is None:
-            hi = j
-    if lo is not None and hi is not None and lo != hi:
-        k0 = speed_bin_knot(lo, edges)
-        k1 = speed_bin_knot(hi, edges)
-        span = k1 - k0
-        t = 0.0 if span <= 1e-12 else (v - k0) / span
-        t = 0.0 if t < 0.0 else 1.0 if t > 1.0 else t
-        s0 = bins[lo].mean_stdev()
-        s1 = bins[hi].mean_stdev()
-        return MeanStdev(
-            s0.mean + t * (s1.mean - s0.mean),
-            max(s0.stdev, s1.stdev),
-        )
     return bins[i].mean_stdev()
 
 
@@ -391,7 +352,8 @@ class ToolForceHistory:
 
         Returns AnomalyKind.LOW when a trip should fire, else None.
         During learn mode, appends samples (if ``allow_learn``) and never
-        trips. HIGH is scored by ``ToolForceBook`` lerp, not here.
+        trips. HIGH is scored by ``ToolForceBook`` against the assigned
+        bin, not here.
         ``trip_low`` is False for per-bin histories (learn only).
         """
         self.last_level = level_g
@@ -503,7 +465,7 @@ class ToolForceBook:
     def _note_jam(
         self, kind: AnomalyKind, confirm_windows: int, recover_windows: int
     ) -> AnomalyKind | None:
-        """Book-level HIGH confirm (not per-bin). None kind is interpolated-healthy."""
+        """Book-level HIGH confirm (not per-bin). None kind is bin-healthy."""
         if kind is AnomalyKind.HIGH:
             self.jam_suspect = True
             self.jam_healthy_streak = 0
@@ -536,8 +498,8 @@ class ToolForceBook:
     ) -> AnomalyKind | None:
         """Score one raw-gram window.
 
-        Learn is per-bin. HIGH uses lerped expected force at ``e_speed``;
-        unlearned assigned bins never HIGH. LOW is global. Short beads skip
+        Learn is per-bin. HIGH uses that bin's learned force; unlearned
+        assigned bins never HIGH. LOW is global. Short beads skip
         scoring entirely (no learn, no HIGH, no LOW): post-travel windows
         are dominated by toolhead accel on the load cell. HIGH confirm is
         consecutive across bins; runout confirm is also consecutive across
@@ -598,7 +560,7 @@ class WindowLevel(NamedTuple):
     """Completed forward-E window score.
 
     ``level`` is raw grams (mean |F-ref|). ``e_speed`` selects the learn
-    bin and the lerped HIGH band.
+    bin and the HIGH band.
     """
 
     level: float
@@ -704,7 +666,7 @@ class EWindowAccumulator:
         """Add forward E mm. Returns a WindowLevel when the window completes.
 
         ``e_speed`` is commanded forward E speed (mm/s) for this segment
-        (bin selection and lerp). ``eventtime`` tracks wall-time span for
+        (bin selection). ``eventtime`` tracks wall-time span for
         the short-bead gate.
 
         Returns None when the window completes with no force samples (avoid

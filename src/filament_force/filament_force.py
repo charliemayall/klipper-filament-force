@@ -11,8 +11,8 @@
 # Config section: [filament_force]
 #
 # Continuous detection: sustained forward-E force drop (global runout) and
-# high-force jam against lerped expected force from per e-speed-bin
-# history. Soft-pauses via pause.MonitorActions.
+# high-force jam against that tool's per e-speed-bin learned force.
+# Soft-pauses via pause.MonitorActions.
 #
 # Presence probe (retract -> deretract spike) is on-demand only via
 # FILAMENT_FORCE_CHECK_SPIKE - not part of continuous detection.
