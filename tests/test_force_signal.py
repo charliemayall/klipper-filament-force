@@ -438,6 +438,7 @@ class TestToolForceBook:
         e_speed: float,
         *,
         short_bead: bool,
+        trip_high: bool = True,
     ) -> AnomalyKind | None:
         return book.observe(
             raw_g,
@@ -450,6 +451,7 @@ class TestToolForceBook:
             recover_windows=2,
             drop_ratio=0.35,
             runout_max_level_g=80.0,
+            trip_high=trip_high,
         )
 
     def test_unlearned_faster_bin_does_not_high(self) -> None:
@@ -513,6 +515,25 @@ class TestToolForceBook:
         assert self._obs(book, 4000.0, 3.0, short_bead=False) is None
         assert self._obs(book, 4000.0, 3.0, short_bead=False) is None
         assert self._obs(book, 4000.0, 3.0, short_bead=False) is AnomalyKind.HIGH
+
+    def test_sigma_jam_off_skips_high_keeps_runout(self) -> None:
+        book = self._book()
+        for _ in range(5):
+            assert self._obs(book, 400.0, 3.0, short_bead=False) is None
+        for _ in range(3):
+            assert (
+                self._obs(book, 4000.0, 3.0, short_bead=False, trip_high=False)
+                is None
+            )
+        assert book.jam_streak == 0
+        assert book.last_high_band is not None
+        assert book.last_high_band.kind is AnomalyKind.HIGH
+        assert self._obs(book, 10.0, 3.0, short_bead=False, trip_high=False) is None
+        assert self._obs(book, 10.0, 3.0, short_bead=False, trip_high=False) is None
+        assert (
+            self._obs(book, 10.0, 3.0, short_bead=False, trip_high=False)
+            is AnomalyKind.LOW
+        )
 
     def test_runout_is_global_across_unlearned_bin(self) -> None:
         book = self._book()

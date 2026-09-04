@@ -495,6 +495,7 @@ class ToolForceBook:
         recover_windows: int,
         drop_ratio: float = 0.35,
         runout_max_level_g: float = 80.0,
+        trip_high: bool = True,
     ) -> AnomalyKind | None:
         """Score one raw-gram window.
 
@@ -504,6 +505,8 @@ class ToolForceBook:
         are dominated by toolhead accel on the load cell. HIGH confirm is
         consecutive across bins; runout confirm is also consecutive across
         bins. Short / unlearned-HIGH skips leave the jam streak alone.
+        ``trip_high`` False still scores the HIGH band (status / debug)
+        but never confirms a sigma jam. oh_shit_force is elsewhere.
         """
         bin_i = self._clamp_bin(speed_bin_index(e_speed, edges))
         self.last_bin = bin_i
@@ -536,12 +539,15 @@ class ToolForceBook:
                 runout_max_level_g=runout_max_level_g,
             )
             self.last_high_band = band
-            high_kind = (
-                AnomalyKind.HIGH if band.kind is AnomalyKind.HIGH else AnomalyKind.NONE
-            )
-            high_trip = self._note_jam(
-                high_kind, confirm_windows, recover_windows
-            )
+            if trip_high:
+                high_kind = (
+                    AnomalyKind.HIGH
+                    if band.kind is AnomalyKind.HIGH
+                    else AnomalyKind.NONE
+                )
+                high_trip = self._note_jam(
+                    high_kind, confirm_windows, recover_windows
+                )
         low_trip = self.runout.observe(
             raw_g,
             high_sigma=high_sigma,

@@ -11,7 +11,8 @@
 # Config section: [filament_force]
 #
 # Continuous detection: sustained forward-E force drop (global runout) and
-# high-force jam against that tool's per e-speed-bin learned force.
+# high-force jam against that tool's per e-speed-bin learned force
+# (sigma_jam, default on). oh_shit_force is a separate absolute trip.
 # Soft-pauses via pause.MonitorActions.
 #
 # Presence probe (retract -> deretract spike) is on-demand only via
@@ -237,6 +238,7 @@ class FilamentForce:
         self.baseline_time: float = config.getfloat("baseline_time", 0.15, above=0.0)
         self.min_delta_g: float = config.getfloat("min_delta_g", 15.0, above=0.0)
         self.high_sigma: float = config.getfloat("high_sigma", 4.0, above=0.0)
+        self.sigma_jam: bool = config.getboolean("sigma_jam", True)
         self.drop_ratio: float = config.getfloat(
             "drop_ratio", 0.35, minval=0.0, maxval=1.0
         )
@@ -695,6 +697,7 @@ class FilamentForce:
             recover_windows=self.recover_windows,
             drop_ratio=self.drop_ratio,
             runout_max_level_g=self.runout_max_level_g,
+            trip_high=self.sigma_jam,
         )
         stats = hist.mean_stdev()
         skip_s = "short_bead" if short_bead else "-"
@@ -1117,6 +1120,7 @@ class FilamentForce:
             "debug_log": 1 if self.debug_log else 0,
             "drop_ratio": self.drop_ratio,
             "runout_max_level_g": self.runout_max_level_g,
+            "sigma_jam": 1 if self.sigma_jam else 0,
             "oh_shit_force": self.oh_shit_force,
             "last_oh_shit_cal_peak_g": self._cal.last_peak_g,
             "pending_recheck": self.actions.pending_recheck,
@@ -1131,7 +1135,7 @@ class FilamentForce:
         "[PROBE_SPIKE_G=] [PROBE_RETRACT_MM=] [PROBE_EXTRA_PRIME_MM=] "
         "[PROBE_FEEDRATE=] [QUIET=0|1] [DEBUG_LOG=0|1] "
         "[MIN_DELTA_G=] [DROP_RATIO=] [RUNOUT_MAX_LEVEL_G=] "
-        "[HIGH_SIGMA=] [CONFIRM_WINDOWS=] [RECOVER_WINDOWS=] "
+        "[HIGH_SIGMA=] [SIGMA_JAM=0|1] [CONFIRM_WINDOWS=] [RECOVER_WINDOWS=] "
         "[DETECTION_LENGTH=] [MIN_E_SPEED=] [OH_SHIT_FORCE=] "
         "[IDLE_RESET_S=] [MIN_LEARN_S=] [SPEED_BINS=] "
         "[HISTORY_N=] [MIN_LEARN_WINDOWS=]"
@@ -1178,6 +1182,9 @@ class FilamentForce:
         high_sigma = gcmd.get_float("HIGH_SIGMA", None, above=0.0)
         if high_sigma is not None:
             self.high_sigma = high_sigma
+        sigma_jam = gcmd.get_int("SIGMA_JAM", None, minval=0, maxval=1)
+        if sigma_jam is not None:
+            self.sigma_jam = bool(sigma_jam)
         confirm = gcmd.get_int("CONFIRM_WINDOWS", None, minval=1)
         if confirm is not None:
             self.confirm_windows = confirm
@@ -1241,6 +1248,7 @@ class FilamentForce:
             f" extra_prime={self.probe_extra_prime_mm:.2f}mm"
             f" feed={self.probe_feedrate:.1f}mm/s\n"
             f"  high_sigma={self.high_sigma:.1f}"
+            f" sigma_jam={'on' if self.sigma_jam else 'off'}"
             f" detection_length={self.detection_length:.1f}mm"
             f" min_e_speed={self.min_e_speed:.2f}"
             f" oh_shit_force={self.oh_shit_force:.1f}\n"
@@ -1296,7 +1304,8 @@ class FilamentForce:
             "filament_force:\n"
             f"  enabled={'on' if self.enabled else 'off'}"
             f" armed={'yes' if self._armed else 'no'}"
-            f" suppress={'yes' if self.suppress else 'no'}\n"
+            f" suppress={'yes' if self.suppress else 'no'}"
+            f" sigma_jam={'on' if self.sigma_jam else 'off'}\n"
             f"  tool={tool} last_bin={self._last_bin}"
             f" learned={learned}"
             f" windows={hist.window_count}/{self.min_learn_windows}\n"
